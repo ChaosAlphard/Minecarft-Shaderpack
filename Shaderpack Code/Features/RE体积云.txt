@@ -1,0 +1,122 @@
+vec4 CloudColor(in vec4 worldPosition, in float sunglow, in vec3 worldLightVector)
+{
+	float cloudHeight = 150.0f;
+	float cloudDepth  = 80.0f;
+	float cloudUpperHeight = cloudHeight + (cloudDepth / 0.0000001f);
+	float cloudLowerHeight = cloudHeight - (cloudDepth / 2.5f);
+
+	if (worldPosition.y < cloudLowerHeight || worldPosition.y > cloudUpperHeight) {
+		return vec4(0.0f);
+	} else {
+		vec3 p = worldPosition.xyz / 150.0f;
+		float t = frameTimeCounter / 2.0f;
+			//t *= 0.001;
+		p.x -= t * 0.02f;
+		p += (Get3DNoise(p * 1.0f + vec3(0.0f, t * 0.01f, 0.0f)) * 2.0f - 1.0f) * 0.3f;
+
+		vec3 p1 = p * vec3(1.0f, 0.5f, 1.0f)  + vec3(0.0f, t * 0.01f, 0.0f);
+		float noise = Get3DNoise(p * vec3(1.0f, 0.5f, 1.0f) + vec3(0.0f, t * 0.01f, 0.0f));
+			 p *= 4.0f;
+			 p.x -= t * 0.02f;
+
+		vec3 p2 = p;
+		noise += (1.0f - abs(Get3DNoise(p) * 3.0f - 1.0f)) * 0.20f;
+			 p *= 3.0f;
+			 p.xz -= t * 0.05f;
+
+		vec3 p3 = p;
+		noise += (1.0f - abs(Get3DNoise(p) * 3.0f - 1.0f)) * 0.075f;
+			 p *= 2.0f;
+			 p.xz -= t * 0.05f;
+
+		noise += (1.0f - abs(Get3DNoise(p) * 3.0f - 1.0f)) * 0.05f;
+			 p *= 2.0f;
+
+		noise /= 1.2f;
+
+		const float lightOffset = 0.35f;
+		float cloudAltitudeWeight = 1.0f - clamp(distance(worldPosition.y, cloudHeight) / (cloudDepth / 2.0f), 0.0f, 1.0f);
+			  cloudAltitudeWeight = pow(cloudAltitudeWeight, 0.5f);
+
+		noise *= cloudAltitudeWeight;
+
+		//cloud edge
+		float coverage = 0.45f;
+			  coverage = mix(coverage, 0.75f, rainStrength);
+		float density = 0.65f;
+		noise = clamp(noise - (1.0f - coverage), 0.0f, 1.0f - density) / (1.0f - density);
+
+		float directLightFalloff = clamp(pow(-(cloudLowerHeight - worldPosition.y) / cloudDepth, 3.5f), 0.0f, 1.0f);
+			  directLightFalloff *= mix(    clamp(pow(noise, 0.9f), 0.0f, 1.0f),    clamp(pow(1.0f - noise, 10.3f), 0.0f, 0.5f),    pow(sunglow, 0.2f));
+
+		vec3 colorDirect = colorSunlight * 10.0f;
+			 colorDirect = mix(colorDirect, colorDirect * vec3(0.5f, 0.7f, 0.9f), timeMidnight);
+			 colorDirect *= 1.0f + pow(sunglow, 4.0f) * 100.0f;
+		vec3 colorAmbient = mix(colorSkylight, colorSunlight, 0.15f) * 0.065f;
+			 colorAmbient *= mix(1.0f, 0.3f, timeMidnight);
+		vec3 color = mix(colorAmbient, colorDirect, vec3(directLightFalloff));
+
+		vec4 result = vec4(color.rgb, noise);
+
+		return result;
+	}
+}
+
+void CalculateClouds (inout vec3 color, inout SurfaceStruct surface)
+{
+	surface.cloudAlpha = 0.0f;
+	vec2 coord = texcoord.st * 2.0f;
+	vec4 worldPosition = gbufferModelViewInverse * surface.screenSpacePosition;
+		 worldPosition.xyz += cameraPosition.xyz;
+
+	float cloudHeight = 150.0f;
+	float cloudDepth  = 80.0f;
+	float cloudDensity = 2.00f;
+
+	float startingRayDepth = far - 5.0f;
+	float rayDepth = startingRayDepth;
+		  //rayDepth += CalculateDitherPattern1() * 0.09f;
+		  //rayDepth += texture2D(noisetex, texcoord.st * (viewWidth / noiseTextureResolution, viewHeight / noiseTextureResolution)).x * 0.1f;
+		  //rayDepth += CalculateDitherPattern2() * 0.1f;
+	float rayIncrement = far / 10.0f;
+		  rayDepth += CalculateDitherPattern1() * rayIncrement;
+
+		int i = 0;
+
+	vec3 cloudColor = colorSunlight;
+	vec4 cloudSum = vec4(0.0f);
+		 cloudSum.rgb = colorSkylight * 0.2f;
+		 cloudSum.rgb = color.rgb;
+
+	float sunglow = CalculateSunglow(surface);
+	float cloudDistanceMult = 400.0f / far;
+	float surfaceDistance = length(worldPosition.xyz - cameraPosition.xyz);
+
+	while (rayDepth > 0.0f)
+	{
+		//determine worldspace ray position
+		vec4 rayPosition = GetCloudSpacePosition(texcoord.st, rayDepth, cloudDistanceMult);
+		float rayDistance = length((rayPosition.xyz - cameraPosition.xyz) / cloudDistanceMult);
+
+		vec4 proximity =  CloudColor(rayPosition, sunglow, surface.worldLightVector);
+			 proximity.a *= cloudDensity;
+			 //proximity.a *=  clamp(surfaceDistance - rayDistance, 0.0f, 1.0f);
+
+		if (surfaceDistance < rayDistance * cloudDistanceMult && !surface.mask.sky) {
+			proximity.a = 0.0f;
+		}
+
+		//cloudSum.rgb = mix( cloudSum.rgb, proximity.rgb, vec3(min(1.0f, proximity.a * cloudDensity)) );
+		//cloudSum.a += proximity.a * cloudDensity;
+		color.rgb = mix(color.rgb, proximity.rgb, vec3(min(1.0f, proximity.a * cloudDensity)));
+
+		surface.cloudAlpha += proximity.a;
+
+		//Increment ray
+		rayDepth -= rayIncrement;
+		i++;
+	}
+
+	//color.rgb = mix(color.rgb, cloudSum.rgb, vec3(min(1.0f, cloudSum.a * 20.0f)));
+	//color.rgb = cloudSum.rgb;
+}

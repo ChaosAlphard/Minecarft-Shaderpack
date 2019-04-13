@@ -1,0 +1,13 @@
+﻿	vec4 worldPos = gbufferModelViewInverse * surface.screenSpacePosition;
+	float cosT2 = pow(0.89, distance(vec2(0.0), worldPos.xz) / 100.0);
+	vec2 starsCoord = worldPos.xz / worldPos.y / 20.0 * (1.0 + cosT2 * cosT2 * 3.5) + vec2(frameTimeCounter / 800.0 / 64 * 2);
+	float stars = max(texture2D(noisetex, starsCoord * 64).x - 0.94, 0.0) * 10.0;
+	float position = abs(worldPos.y + cameraPosition.y - 65);
+	float horizonPos = max(exp(1.0 - position / 50.0), 0.0);
+		stars = mix(stars * timeMidnight, 0.0, horizonPos);
+	float calcSun = min(pow(max(dot(normalize(surface.screenSpacePosition).xyz, surface.lightVector), 0.0), 2000.0), 0.2) * 3.0;
+		stars = mix(stars, 0.0, calcSun);
+	finalComposite = mix(finalComposite , vec3(0.8,0.8,0.9) * 0.01, stars * float(surface.mask.sky));
+
+// starsCoord * 16 = 样本距离
+// frameTimeCounter / 800.0 / 16 * 2 = 运行速度
